@@ -1,0 +1,62 @@
+/* ===== Кто печатает: аватарки + анимация ••• ===== */
+.typing-bar {
+    display: none; align-items: center; gap: 8px; padding: 6px 12px;
+    background: var(--bg-secondary); flex-shrink: 0;
+    border-top: 1px solid var(--border-color);
+}
+.typing-avs { display: flex; flex-shrink: 0; }
+.typing-av {
+    width: 28px; height: 28px; border-radius: 50%; overflow: hidden;
+    background: linear-gradient(135deg, var(--accent1), var(--accent2));
+    color: #fff; font-size: 12px; font-weight: bold;
+    display: flex; align-items: center; justify-content: center;
+    border: 2px solid var(--bg-secondary); margin-left: -8px;
+}
+.typing-av:first-child { margin-left: 0; }
+.typing-av img { width: 100%; height: 100%; object-fit: cover; }
+.typing-bubble {
+    display: flex; align-items: center; gap: 4px; padding: 10px 13px;
+    border-radius: 16px; border-bottom-left-radius: 4px;
+    background: var(--msg-other-bg); border: 1px solid var(--border-color);
+}
+.typing-bubble span {
+    width: 7px; height: 7px; border-radius: 50%; background: var(--accent1);
+    animation: tdot 1.2s infinite ease-in-out;
+}
+.typing-bubble span:nth-child(2) { animation-delay: .2s; }
+.typing-bubble span:nth-child(3) { animation-delay: .4s; }
+@keyframes tdot {
+    0%, 60%, 100% { transform: translateY(0); opacity: .4; }
+    30% { transform: translateY(-5px); opacity: 1; }
+}
+.typing-name {
+    font-size: 12px; color: var(--text-secondary);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+}
+
+/* ===== Видео ===== */
+.video-wrap {
+    position: relative; width: 240px; max-width: 100%; border-radius: 14px;
+    overflow: hidden; cursor: pointer; background: #000; line-height: 0;
+}
+.video-thumb { display: block; width: 100%; max-height: 320px; min-height: 120px; object-fit: cover; }
+.play-ic {
+    position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+    width: 52px; height: 52px; border-radius: 50%; background: rgba(0,0,0,.55); color: #fff;
+    display: flex; align-items: center; justify-content: center; font-size: 22px; line-height: 1;
+    padding-left: 3px;
+}
+.video-wrap.loading .play-ic { animation: tdot 1s infinite; }
+.vid-dur {
+    position: absolute; left: 8px; bottom: 8px; background: rgba(0,0,0,.6); color: #fff;
+    font-size: 11px; padding: 2px 8px; border-radius: 10px; line-height: 1.4;
+}
+.message-video {
+    display: block; width: 240px; max-width: 100%; max-height: 360px;
+    border-radius: 14px; background: #000;
+}
+.vid-preview { width: 100%; max-height: 45vh; border-radius: 12px; background: #000; margin-bottom: 6px; }
+
+/* ===== Рамка обрезки: можно двигать ===== */
+.crop-move { position: absolute; inset: 0; pointer-events: auto; touch-action: none; z-index: 2; cursor: move; }
+.photo-editor-canvas-wrap.avatar-mode .crop-box { border-radius: 0; }
