@@ -1,7 +1,7 @@
 'use strict';
 /* =========================================================
    Мессенджер на Firebase Realtime Database
-   Фото и стикеры хранятся в базе в сжатом виде.
+   Фото, стикеры и видео хранятся в базе (узел images/).
    ========================================================= */
 
 const firebaseConfig = {
@@ -19,6 +19,8 @@ try { auth.useDeviceLanguage(); } catch (e) {}
 const db = firebase.database();
 const TS = firebase.database.ServerValue.TIMESTAMP;
 
+const VIDEO_MAX = 6 * 1024 * 1024; // максимум 6 МБ на видео (в базе оно хранится как base64)
+
 /* ---------- ХРАНИЛИЩЕ НАСТРОЕК ---------- */
 const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v === null ? d : v; } catch (e) { return d; } },
@@ -35,6 +37,9 @@ const I18N = {
         noPm: 'Личных переписок пока нет.\nНажмите на ник в общем чате → «Написать».',
         firstMsg: 'Напишите первое сообщение', noMsgs: 'Сообщений пока нет. Напишите первым 🙂', msgPh: 'Сообщение...',
         you: 'Вы', youPrefix: 'Вы: ', photo: '📷 Фото', sticker: 'Стикер', photoMissing: '📷 Фото недоступно',
+        video: '🎥 Видео', videoWord: 'Видео', plusVideo: 'Видео', videoTooBig: 'Видео больше 6 МБ. Обрежь или сожми его',
+        needVideo: 'Нужен видеофайл', videoFail: 'Не удалось обработать видео', videoNotSent: 'Видео не отправлено: ',
+        videoLoadFail: 'Не удалось загрузить видео', avatarEd: 'Аватар',
         anon: 'Аноним', peer: 'Собеседник', typing: 'печатает…', online: 'в сети', offline: 'не в сети',
         justNow: 'был(а) только что', minAgo: 'был(а) {n} мин назад', hrAgo: 'был(а) {n} ч назад',
         dayAgo: 'был(а) {n} дн назад', seenAt: 'был(а) {d}', yesterday: 'Вчера', edited: 'изменено',
@@ -62,7 +67,7 @@ const I18N = {
         profile: 'Профиль', subscribe: '➕ Подписаться', subscribed: '✓ Вы подписаны', subOn: 'Подписались', subOff: 'Отписались',
         write: '💬 Написать', nothingTold: 'Ничего не рассказал', removeFollower: 'Удалить подписчика?', followerRemoved: 'Подписчик удалён',
         clearGeneral: '🗑️ Очистить общий чат', clearConfirm: 'Очистить ВЕСЬ общий чат?', cleared: 'Чат очищен',
-        rotate: 'Повернуть', back: 'Вернуть назад', rewrite: 'Переписать', captionPh: 'Подпись к фото...', send: 'Отправить',
+        rotate: 'Повернуть', back: 'Вернуть назад', rewrite: 'Переписать', captionPh: 'Подпись...', send: 'Отправить',
         cancelEd: 'Отмена', photoWord: 'Фото', stickerEd: 'Стикер',
         plusPhoto: 'Фото', plusSticker: 'Создать стикер', stickers: 'Стикеры',
         stkEmpty: 'Здесь пока пусто', favAdd: 'В избранные', favRemove: 'Убрать из избранных', favAdded: 'Добавлено в избранные',
@@ -91,6 +96,9 @@ const I18N = {
         noPm: 'No private chats yet.\nTap a nickname in the general chat → “Message”.',
         firstMsg: 'Write the first message', noMsgs: 'No messages yet. Be the first 🙂', msgPh: 'Message...',
         you: 'You', youPrefix: 'You: ', photo: '📷 Photo', sticker: 'Sticker', photoMissing: '📷 Photo unavailable',
+        video: '🎥 Video', videoWord: 'Video', plusVideo: 'Video', videoTooBig: 'Video is larger than 6 MB. Trim or compress it',
+        needVideo: 'A video file is required', videoFail: 'Could not process the video', videoNotSent: 'Video not sent: ',
+        videoLoadFail: 'Could not load the video', avatarEd: 'Avatar',
         anon: 'Anonymous', peer: 'Contact', typing: 'typing…', online: 'online', offline: 'offline',
         justNow: 'last seen just now', minAgo: 'last seen {n} min ago', hrAgo: 'last seen {n} h ago',
         dayAgo: 'last seen {n} d ago', seenAt: 'last seen {d}', yesterday: 'Yesterday', edited: 'edited',
@@ -118,7 +126,7 @@ const I18N = {
         profile: 'Profile', subscribe: '➕ Follow', subscribed: '✓ Following', subOn: 'Followed', subOff: 'Unfollowed',
         write: '💬 Message', nothingTold: 'Nothing here yet', removeFollower: 'Remove follower?', followerRemoved: 'Follower removed',
         clearGeneral: '🗑️ Clear general chat', clearConfirm: 'Clear the ENTIRE general chat?', cleared: 'Chat cleared',
-        rotate: 'Rotate', back: 'Reset', rewrite: 'Rewrite', captionPh: 'Photo caption...', send: 'Send',
+        rotate: 'Rotate', back: 'Reset', rewrite: 'Rewrite', captionPh: 'Caption...', send: 'Send',
         cancelEd: 'Cancel', photoWord: 'Photo', stickerEd: 'Sticker',
         plusPhoto: 'Photo', plusSticker: 'Create sticker', stickers: 'Stickers',
         stkEmpty: 'Nothing here yet', favAdd: 'Add to favorites', favRemove: 'Remove from favorites', favAdded: 'Added to favorites',
@@ -154,8 +162,9 @@ const t = (k, v) => {
 let me = null, myNick = '', isAdmin = false, startedUid = null;
 let chat = null, replyTo = null;
 let myChats = {}, chatsRef = null;
-let serverOffset = 0, amTyping = null, typingTimer = null;
-const userCache = {}, avatarCache = {}, imageCache = {};
+let serverOffset = 0, amTyping = null, typingTimer = null, lastPing = 0;
+let pendingVid = null;
+const userCache = {}, avatarCache = {}, imageCache = {}, videoUrls = {};
 const A = {};                         // обработчики data-act
 const COLORS = ['default', 'blue', 'green', 'pink', 'purple', 'orange', 'red', 'teal'];
 const SET = { open: false, sec: null };
@@ -168,6 +177,7 @@ const ICON = {
     globe: svg('<circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>'),
     image: svg('<rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="M21 15l-5-5L5 21"/>'),
     smile: svg('<circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/>'),
+    video: svg('<polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/>'),
     check: svg('<polyline points="20 6 9 17 4 12"/>', 18)
 };
 
@@ -178,6 +188,7 @@ const roomId = (a, b) => 'pm_' + [a, b].sort().join('_');
 const initial = n => esc(((n || '?').trim()[0] || '?').toUpperCase());
 const pad = n => String(n).padStart(2, '0');
 const hhmm = ts => { const d = new Date(ts); return pad(d.getHours()) + ':' + pad(d.getMinutes()); };
+const fmtDur = s => { s = Math.max(0, Math.round(s || 0)); return Math.floor(s / 60) + ':' + pad(s % 60); };
 function toast(msg) {
     let el = $('toast');
     if (!el) { el = document.createElement('div'); el.id = 'toast'; document.body.appendChild(el); }
@@ -291,7 +302,7 @@ function applyLang() {
     document.querySelectorAll('[data-i18n-ph]').forEach(e => { e.placeholder = t(e.dataset.i18nPh); });
     if (startedUid) {
         renderChats();
-        if (chat) { $('chatTitle').textContent = chat.kind === 'chat' ? '💬 ' + t('general') : $('chatTitle').textContent; updateHeaderStatus(); }
+        if (chat) { $('chatTitle').textContent = chat.kind === 'chat' ? '💬 ' + t('general') : $('chatTitle').textContent; updateHeaderStatus(true); }
         if (stk.open) renderStk();
     }
     if (SET.open) { buildSide(); showSection(SET.sec); }
@@ -319,17 +330,24 @@ async function shrink(src, max, q, square, mime = 'image/jpeg') {
     x.drawImage(im, sx, sy, sw, sh, 0, 0, c.width, c.height);
     return c.toDataURL(mime, q);
 }
-function pickImage() {
+function pickFile(accept) {
     return new Promise(res => {
-        const i = $('filePicker'); i.value = '';
-        i.onchange = () => {
-            const f = i.files[0] || null;
-            if (f && !f.type.startsWith('image/')) { toast(t('needImage')); return res(null); }
-            if (f && f.size > 30 * 1024 * 1024) { toast(t('tooBig')); return res(null); }
-            res(f);
-        };
+        const i = $('filePicker'); i.value = ''; i.accept = accept;
+        i.onchange = () => res(i.files[0] || null);
         i.click();
     });
+}
+async function pickImage() {
+    const f = await pickFile('image/*'); if (!f) return null;
+    if (!f.type.startsWith('image/')) { toast(t('needImage')); return null; }
+    if (f.size > 30 * 1024 * 1024) { toast(t('tooBig')); return null; }
+    return f;
+}
+async function pickVideo() {
+    const f = await pickFile('video/*'); if (!f) return null;
+    if (!f.type.startsWith('video/')) { toast(t('needVideo')); return null; }
+    if (f.size > VIDEO_MAX) { toast(t('videoTooBig')); return null; }
+    return f;
 }
 function getImage(id) {
     if (!imageCache[id]) {
@@ -338,6 +356,16 @@ function getImage(id) {
         }).catch(e => { delete imageCache[id]; throw e; });
     }
     return imageCache[id];
+}
+function getVideoUrl(id) {
+    if (!videoUrls[id]) {
+        videoUrls[id] = db.ref('images/' + id).once('value').then(async s => {
+            const v = s.val(); if (!v) throw new Error('none');
+            const blob = await (await fetch(v)).blob();
+            return URL.createObjectURL(blob);
+        }).catch(e => { delete videoUrls[id]; throw e; });
+    }
+    return videoUrls[id];
 }
 function getAvatar(uid, fresh) {
     const c = avatarCache[uid];
@@ -357,6 +385,29 @@ function getUser(uid, fresh) {
 const avatarInner = (url, nick) => url ? `<img src="${esc(url)}" alt="">` : initial(nick);
 function fillImg(img, imageId, onFail) {
     getImage(imageId).then(u => { img.src = u; }, onFail || (() => {}));
+}
+
+/* кадр-превью и длительность видео */
+function videoMeta(url) {
+    return new Promise((res, rej) => {
+        const v = document.createElement('video');
+        v.preload = 'metadata'; v.muted = true; v.playsInline = true;
+        let done = false;
+        const fail = () => { if (!done) { done = true; rej(new Error('video')); } };
+        v.onerror = fail;
+        v.onloadedmetadata = () => { try { v.currentTime = Math.min(0.1, (v.duration || 1) / 2); } catch (e) { fail(); } };
+        v.onseeked = () => {
+            if (done) return; done = true;
+            const w = v.videoWidth || 320, h = v.videoHeight || 240;
+            const k = Math.min(1, 320 / Math.max(w, h));
+            const c = document.createElement('canvas');
+            c.width = Math.max(1, Math.round(w * k)); c.height = Math.max(1, Math.round(h * k));
+            c.getContext('2d').drawImage(v, 0, 0, c.width, c.height);
+            res({ thumb: c.toDataURL('image/jpeg', 0.6), dur: Math.round(v.duration) || 0 });
+        };
+        v.src = url;
+        setTimeout(fail, 8000);
+    });
 }
 
 /* ---------- ПРОСМОТР ФОТО ---------- */
@@ -580,7 +631,7 @@ function renderChats() {
         <div class="chat-item-info"><div class="chat-item-name">${esc(t('general'))}</div><div class="chat-item-last">${esc(t('allUsers'))}</div></div></div></div>`;
     if (!rows.length) html += `<div class="empty-note">${esc(t('noPm'))}</div>`;
     rows.forEach(c => {
-        let prev = c.lastSticker ? '🖼 ' + t('sticker') : c.lastImage ? t('photo') + (c.lastText ? ' ' + c.lastText : '') : (c.lastText || '...');
+        let prev = c.lastSticker ? '🖼 ' + t('sticker') : c.lastVideo ? t('video') + (c.lastText ? ' ' + c.lastText : '') : c.lastImage ? t('photo') + (c.lastText ? ' ' + c.lastText : '') : (c.lastText || '...');
         if (prev.length > 40) prev = prev.slice(0, 40) + '…';
         if (c.lastFrom === me.uid) prev = t('youPrefix') + prev;
         html += `<div class="chat-item-wrapper" data-uid="${esc(c.uid)}">
@@ -629,7 +680,11 @@ A.delChatBoth = async el => {
         const rid = roomId(me.uid, uid);
         const snap = await db.ref('pm_messages/' + rid).once('value');
         const ups = {};
-        snap.forEach(c => { const v = c.val(); if (v && v.imageId && !v.sticker) ups['images/' + v.imageId] = null; });
+        snap.forEach(c => {
+            const v = c.val(); if (!v) return;
+            if (v.imageId && !v.sticker) ups['images/' + v.imageId] = null;
+            if (v.videoId) ups['images/' + v.videoId] = null;
+        });
         ups['pm_messages/' + rid] = null;
         ups[`user_chats/${me.uid}/${uid}`] = null;
         ups[`user_chats/${uid}/${me.uid}`] = null;
@@ -680,7 +735,7 @@ async function openChat(kind, otherUid) {
     closeChat(); closeStickers(); closeModal('profileModal'); closeModal('listModal');
     const ctx = chat = {
         kind, other: otherUid || null, room: kind === 'chat' ? 'general' : roomId(me.uid, otherUid),
-        msgs: {}, hidden: {}, loaded: false, offs: [], typers: [], otherData: null
+        msgs: {}, hidden: {}, loaded: false, offs: [], typers: [], typRaw: {}, otherData: null
     };
     showScreen('chat');
     $('chatHeader').classList.toggle('chat-header-pm', kind === 'pm');
@@ -717,7 +772,7 @@ async function openChat(kind, otherUid) {
         const m = norm(s.key, s.val());
         ctx.msgs[m.id] = m;
         const el = box.querySelector(`.message[data-id="${m.id}"]`);
-        if (el) el.replaceWith(buildMessage(m));
+        if (el && !el.querySelector('video')) el.replaceWith(buildMessage(m));   // не сбрасываем играющее видео
     };
     const onRemove = async s => {
         const still = await ctx.ref.child(s.key).once('value').catch(() => null);
@@ -739,24 +794,50 @@ async function openChat(kind, otherUid) {
     }, () => {});
 
     const tref = db.ref('typing/' + ctx.room);
-    const tcb = s => {
-        const v = s.val() || {}, now = Date.now() + serverOffset;
-        ctx.typers = Object.entries(v).filter(([u, x]) => u !== me.uid && now - (x.ts || 0) < 8000).map(([, x]) => x.nickname || '…');
-        updateHeaderStatus();
-    };
+    const tcb = s => { ctx.typRaw = s.val() || {}; refreshTypers(ctx); };
     tref.on('value', tcb); ctx.offs.push(() => tref.off('value', tcb));
 }
 function closeChat() {
-    stopTyping(); closeMsgMenu(); closePlus();
+    stopTyping(); closeMsgMenu(); closePlus(); closeModal('vidModal');
     if (chat) chat.offs.forEach(f => { try { f(); } catch (e) {} });
-    chat = null; clearReply();
+    chat = null; clearReply(); renderTypingBar();
 }
-function updateHeaderStatus() {
+
+/* ---------- КТО ПЕЧАТАЕТ ---------- */
+function refreshTypers(ctx) {
+    if (chat !== ctx) return;
+    const now = Date.now() + serverOffset;
+    ctx.typers = Object.entries(ctx.typRaw || {})
+        .filter(([u, x]) => u !== me.uid && now - (x.ts || 0) < 9000)
+        .map(([u, x]) => ({ uid: u, nickname: x.nickname || '…' }));
+    updateHeaderStatus();
+}
+setInterval(() => { if (chat) refreshTypers(chat); }, 3000);
+
+function renderTypingBar(force) {
+    const bar = $('typingBar'); if (!bar) return;
+    const ty = chat ? chat.typers : [];
+    if (!ty.length) { bar.style.display = 'none'; bar._key = ''; return; }
+    const key = ty.map(x => x.uid).join(',') + '|' + lang;
+    if (!force && bar._key === key && bar.style.display !== 'none') return;   // не перезапускаем анимацию
+    bar._key = key; bar.style.display = 'flex';
+    const shown = ty.slice(0, 3);
+    const names = ty.slice(0, 2).map(x => x.nickname).join(', ') + (ty.length > 2 ? ' +' + (ty.length - 2) : '');
+    bar.innerHTML = `<div class="typing-avs">${shown.map(x => `<div class="typing-av">${initial(x.nickname)}</div>`).join('')}</div>
+        <div class="typing-bubble"><span></span><span></span><span></span></div>
+        <div class="typing-name">${esc(names)} ${esc(t('typing'))}</div>`;
+    const avs = bar.querySelectorAll('.typing-av');
+    shown.forEach((x, i) => getAvatar(x.uid).then(a => { if (a && avs[i] && avs[i].isConnected) avs[i].innerHTML = avatarInner(a, x.nickname); }));
+    const b = $('messages');
+    if (b && b._stick) requestAnimationFrame(scrollBottom);
+}
+function updateHeaderStatus(force) {
     if (!chat) return;
     const el = $('status');
-    if (chat.typers.length) el.textContent = (chat.kind === 'chat' ? chat.typers.slice(0, 2).join(', ') + ' ' : '') + t('typing');
+    if (chat.typers.length) el.textContent = (chat.kind === 'chat' ? chat.typers.slice(0, 2).map(x => x.nickname).join(', ') + ' ' : '') + t('typing');
     else if (chat.kind === 'pm') el.textContent = fmtStatus(chat.otherData)[0];
     else el.textContent = '';
+    renderTypingBar(force);
 }
 A.headerProfile = () => { if (chat && chat.kind === 'pm') showUserProfile(chat.other); };
 
@@ -764,6 +845,7 @@ function norm(id, r) {
     return {
         id, userId: r.userId || r.fromUserId || '', nickname: r.nickname || r.fromNickname || t('anon'),
         text: r.text || '', imageId: r.imageId || null, imageUrl: r.imageUrl || null,
+        videoId: r.videoId || null, thumb: r.thumb || null, dur: r.dur || 0,
         sticker: !!r.sticker, packId: r.packId || null,
         timestamp: r.timestamp || 0, status: r.status || 'sent', edited: !!r.edited,
         replyTo: r.replyTo || null, cid: r.cid || null
@@ -779,14 +861,17 @@ function buildMessage(m) {
     el.dataset.id = m.id; el.dataset.uid = m.userId || '';
     if (m.cid) el.dataset.cid = m.cid;
     const hasImg = !!(m.imageId || m.imageUrl || m.localImage);
+    const hasVid = !!m.videoId;
     const reply = m.replyTo
         ? `<div class="reply-preview" data-act="goto" data-id="${esc(m.replyTo.id)}"><strong>${esc(m.replyTo.nickname)}:</strong> ${esc(m.replyTo.text || '')}</div>` : '';
     let body;
+    const txt = m.text ? `<div class="msg-text">${esc(m.text)}</div>` : '';
     if (m.sticker) body = '<img class="sticker-img" data-act="stickerTap" alt="">';
-    else body = (hasImg ? '<img class="message-image" data-act="viewImg" alt="">' : '') + (m.text ? `<div class="msg-text">${esc(m.text)}</div>` : '');
-    const bcls = m.sticker ? ' sticker-bubble' : hasImg ? ' has-image' : '';
+    else if (hasVid) body = `<div class="video-wrap" data-act="playVideo"><img class="video-thumb" src="${esc(m.thumb || '')}" alt=""><span class="play-ic">▶</span><span class="vid-dur">${fmtDur(m.dur)}</span></div>` + txt;
+    else body = (hasImg ? '<img class="message-image" data-act="viewImg" alt="">' : '') + txt;
+    const bcls = m.sticker ? ' sticker-bubble' : (hasImg || hasVid) ? ' has-image' : '';
     el.innerHTML =
-        (mine ? '' : `<div class="message-avatar" data-act="openUserProfile" data-uid="${esc(m.userId)}">${initial(m.nickname)}</div>`) +
+        `<div class="message-avatar" data-act="openUserProfile" data-uid="${esc(m.userId)}">${initial(m.nickname)}</div>` +
         `<div class="message-content">${reply}
             <div class="message-bubble${bcls}">${body}</div>
             <div class="message-info">
@@ -807,7 +892,9 @@ function buildMessage(m) {
         else if (m.imageId) fillImg(img, m.imageId, fail);
         else img.src = m.imageUrl;
     }
-    if (!mine) getAvatar(m.userId).then(a => {
+    const th = el.querySelector('img.video-thumb');
+    if (th) th.onload = () => { const b = $('messages'); if (b && b._stick) scrollBottom(); };
+    getAvatar(m.userId).then(a => {
         const av = el.querySelector('.message-avatar'); if (a && av) av.innerHTML = avatarInner(a, m.nickname);
     });
     attachSwipe(el, m.id);
@@ -853,12 +940,28 @@ A.stickerTap = el => {
     const m = chat && chat.msgs[el.closest('.message').dataset.id];
     if (m && m.packId) openPack(m.packId);
 };
+A.playVideo = async el => {
+    const msg = el.closest('.message');
+    const m = chat && msg && chat.msgs[msg.dataset.id];
+    if (!m || !m.videoId || el.classList.contains('loading')) return;
+    el.classList.add('loading');
+    try {
+        const url = await getVideoUrl(m.videoId);
+        const v = document.createElement('video');
+        v.className = 'message-video'; v.src = url; v.controls = true; v.autoplay = true; v.playsInline = true;
+        if (m.thumb) v.poster = m.thumb;
+        el.replaceWith(v);
+        v.play().catch(() => {});
+    } catch (e) { el.classList.remove('loading'); toast(t('videoLoadFail')); }
+};
 
 /* ---------- ОТВЕТ ---------- */
 function setReply(id) {
     if (!chat) return;
     const m = chat.msgs[id]; if (!m) return;
-    const text = m.sticker ? '🖼 ' + t('sticker') : (m.imageId || m.imageUrl ? '📷 ' : '') + (m.text || (m.imageId || m.imageUrl ? t('photoWord') : ''));
+    const text = m.sticker ? '🖼 ' + t('sticker')
+        : m.videoId ? '🎥 ' + (m.text || t('videoWord'))
+        : (m.imageId || m.imageUrl ? '📷 ' : '') + (m.text || (m.imageId || m.imageUrl ? t('photoWord') : ''));
     replyTo = { id, nickname: m.nickname, text: text.slice(0, 100) };
     $('replyPanel').style.display = 'block';
     $('replyPanelName').textContent = m.nickname;
@@ -875,7 +978,7 @@ async function openMsgMenu(bubble) {
     const m = chat.msgs[el.dataset.id]; if (!m) return;
     if (m.sticker) { try { await loadStk(); } catch (e) {} }
     closeMsgMenu();
-    const mine = m.userId === me.uid, hasImg = !!(m.imageId || m.imageUrl), items = [];
+    const mine = m.userId === me.uid, hasImg = !!(m.imageId || m.imageUrl), hasVid = !!m.videoId, items = [];
     const add = (act, icon, label, cls = '') => items.push(`<button class="mm-item ${cls}" data-act="${act}" data-id="${esc(m.id)}"><span class="mm-ic">${icon}</span>${esc(label)}</button>`);
     add('doReply', '↩', t('reply'));
     if (m.sticker) {
@@ -883,8 +986,8 @@ async function openMsgMenu(bubble) {
         if (m.packId) add('doOpenPack', '▦', t('openPack'));
     } else {
         if (m.text) add('doCopy', '❐', t('copy'));
-        if (hasImg) add('doDownload', '⤓', t('download'));
-        if (mine && m.text && !hasImg) add('doEdit', '✎', t('edit'));
+        if (hasImg || hasVid) add('doDownload', '⤓', t('download'));
+        if (mine && m.text && !hasImg && !hasVid) add('doEdit', '✎', t('edit'));
     }
     add('delMe', '', t('hideMe'));
     if (mine || isAdmin) add('delAll', '✕', t('delAll'), 'danger');
@@ -925,9 +1028,13 @@ A.doDownload = async el => {
     const m = msgOf(el); closeMsgMenu();
     if (!m) return;
     try {
-        const src = m.imageId ? await getImage(m.imageId) : m.imageUrl;
         const a = document.createElement('a');
-        a.href = src; a.download = 'photo_' + (m.timestamp || Date.now()) + '.jpg'; a.rel = 'noopener';
+        if (m.videoId) {
+            a.href = await getVideoUrl(m.videoId); a.download = 'video_' + (m.timestamp || Date.now()) + '.mp4';
+        } else {
+            a.href = m.imageId ? await getImage(m.imageId) : m.imageUrl; a.download = 'photo_' + (m.timestamp || Date.now()) + '.jpg';
+        }
+        a.rel = 'noopener';
         document.body.appendChild(a); a.click(); a.remove();
     } catch (e) { toast(t('photoMissing')); }
 };
@@ -958,6 +1065,7 @@ A.delAll = async el => {
     try {
         await chat.ref.child(id).remove();
         if (m && m.imageId && !m.sticker) db.ref('images/' + m.imageId).remove().catch(() => {});
+        if (m && m.videoId) db.ref('images/' + m.videoId).remove().catch(() => {});
         toast(t('deletedAll'));
     } catch (e) { toast(errText(e)); }
 };
@@ -980,7 +1088,7 @@ async function pushMsg(ctx, m) {
     if (ctx.kind === 'pm') {
         const base = {
             lastText: String(m.text || '').slice(0, 80), lastImage: !!m.imageId && !m.sticker,
-            lastSticker: !!m.sticker, lastTime: m.timestamp, lastFrom: me.uid
+            lastVideo: !!m.videoId, lastSticker: !!m.sticker, lastTime: m.timestamp, lastFrom: me.uid
         };
         db.ref(`user_chats/${me.uid}/${ctx.other}`).update({ ...base, unread: 0 });
         const r = db.ref(`user_chats/${ctx.other}/${me.uid}`);
@@ -1002,9 +1110,12 @@ $('messageInput').addEventListener('input', e => {
     if (!chat || !me) return;
     if (e.target.value.trim()) {
         if (amTyping !== chat.room) {
-            stopTyping(); amTyping = chat.room;
+            stopTyping(); amTyping = chat.room; lastPing = Date.now();
             const r = db.ref(`typing/${amTyping}/${me.uid}`);
             r.set({ nickname: myNick, ts: TS }); r.onDisconnect().remove();
+        } else if (Date.now() - lastPing > 4000) {
+            lastPing = Date.now();
+            db.ref(`typing/${amTyping}/${me.uid}`).update({ ts: TS }).catch(() => {});
         }
         clearTimeout(typingTimer); typingTimer = setTimeout(stopTyping, 3000);
     } else stopTyping();
@@ -1065,6 +1176,7 @@ A.plusMenu = () => {
     const m = document.createElement('div');
     m.id = 'plusMenu'; m.className = 'plus-menu';
     m.innerHTML = `<button class="mm-item" data-act="plusPhoto"><span class="mm-ic">${ICON.image}</span>${esc(t('plusPhoto'))}</button>
+        <button class="mm-item" data-act="plusVideo"><span class="mm-ic">${ICON.video}</span>${esc(t('plusVideo'))}</button>
         <button class="mm-item" data-act="newSticker"><span class="mm-ic">${ICON.smile}</span>${esc(t('plusSticker'))}</button>`;
     $('chatContainer').appendChild(m);
 };
@@ -1079,16 +1191,63 @@ A.newSticker = async () => {
     try { await loadStk(); openPhotoEditor(await readFile(f), 'sticker'); } catch (e) { toast(errText(e)); }
 };
 
-/* ---------- РЕДАКТОР ФОТО / СТИКЕРА ---------- */
-const ed = { orig: null, rot: null, deg: 0, mode: 'photo', kind: 'single', crop: { x: 0, y: 0, w: 1, h: 1 } };
+/* ---------- ВИДЕО ---------- */
+A.plusVideo = async () => {
+    closePlus(); if (!chat) return;
+    const f = await pickVideo(); if (!f) return;
+    const url = URL.createObjectURL(f);
+    pendingVid = { file: f, url };
+    const md = showModal(`<h3>🎥 ${esc(t('videoWord'))}</h3>
+        <video class="vid-preview" src="${url}" controls playsinline></video>
+        <input type="text" id="vidCaption" placeholder="${esc(t('captionPh'))}" maxlength="200">
+        <div class="profile-buttons">
+            <button id="vidSendBtn" data-act="vidSend">${esc(t('send'))}</button>
+            <button class="moder-choice-btn cancel" data-act="closeModal" data-modal="vidModal">${esc(t('cancel'))}</button>
+        </div>`, 'vidModal');
+    md._onClose = () => { try { URL.revokeObjectURL(url); } catch (e) {} };
+};
+A.vidSend = async () => {
+    const ctx = chat; if (!ctx || !pendingVid) return;
+    const { file, url } = pendingVid;
+    const btn = $('vidSendBtn'); if (btn) btn.disabled = true;
+    const caption = ($('vidCaption') || {}).value ? $('vidCaption').value.trim() : '';
+    let meta;
+    try { meta = await videoMeta(url); } catch (e) { if (btn) btn.disabled = false; return toast(t('videoFail')); }
+    pendingVid = null; closeModal('vidModal');
+    const cid = 'c' + Date.now() + Math.random().toString(36).slice(2, 6);
+    const reply = replyTo;
+    addMessage({ id: 'temp_' + cid, cid, userId: me.uid, nickname: myNick, text: caption, videoId: 'pending', thumb: meta.thumb, dur: meta.dur, timestamp: Date.now(), status: 'sending', replyTo: reply });
+    clearReply();
+    const vref = db.ref('images').push();
+    try {
+        let data = await readFile(file);
+        if (/^data:;/.test(data)) data = data.replace(/^data:;/, 'data:video/mp4;');
+        if (data.length > 9.5e6) throw new Error(t('videoTooBig'));
+        await vref.set(data);
+        const m = { userId: me.uid, nickname: myNick, timestamp: Date.now(), status: 'sent', text: caption, videoId: vref.key, thumb: meta.thumb, dur: meta.dur, cid };
+        if (ctx.kind === 'pm') m.toUserId = ctx.other;
+        if (reply) m.replyTo = reply;
+        await pushMsg(ctx, m);
+    } catch (e) {
+        vref.remove().catch(() => {});
+        const st = document.querySelector(`.message[data-id="temp_${cid}"] .bubble-status`);
+        if (st) { st.className = 'bubble-status failed'; st.textContent = '❌'; }
+        setTimeout(() => document.querySelector(`.message[data-id="temp_${cid}"]`)?.remove(), 5000);
+        toast(t('videoNotSent') + errText(e));
+    }
+};
+
+/* ---------- РЕДАКТОР ФОТО / СТИКЕРА / АВАТАРА ---------- */
+const ed = { orig: null, rot: null, deg: 0, mode: 'photo', kind: 'single', W: 1, H: 1, crop: { x: 0, y: 0, w: 1, h: 1 } };
 async function openPhotoEditor(src, mode = 'photo') {
     if ($('photoEditor')) return;
     ed.mode = mode; ed.kind = 'single';
-    const isSt = mode === 'sticker';
+    const isSt = mode === 'sticker', isAv = mode === 'avatar';
     try { ed.orig = await shrink(src, isSt ? 1024 : 1600, 0.9, false, isSt ? 'image/png' : 'image/jpeg'); } catch (e) { return toast(t('needImage')); }
     ed.rot = ed.orig; ed.deg = 0; ed.crop = { x: 0, y: 0, w: 1, h: 1 };
     const myPacks = Object.values(stk.data.packs).filter(p => p.owner === me.uid);
-    const bottom = isSt ? `
+    let bottom;
+    if (isSt) bottom = `
         <div class="photo-editor-bottom col">
             <div class="seg">
                 <button data-act="edKind" data-kind="single" class="active">${esc(t('justSticker'))}</button>
@@ -1099,7 +1258,12 @@ async function openPhotoEditor(src, mode = 'photo') {
                 <input type="text" id="packName" class="photo-editor-caption" placeholder="${esc(t('packName'))}" maxlength="30">
             </div>
             <button class="photo-editor-send" data-act="edSaveSticker" style="width:100%">${esc(t('save'))}</button>
-        </div>` : `
+        </div>`;
+    else if (isAv) bottom = `
+        <div class="photo-editor-bottom col">
+            <button class="photo-editor-send" data-act="edSaveAvatar" style="width:100%">${esc(t('save'))}</button>
+        </div>`;
+    else bottom = `
         <div class="photo-editor-bottom">
             <input type="text" class="photo-editor-caption" id="edCaption" placeholder="${esc(t('captionPh'))}" maxlength="200">
             <button class="photo-editor-send" data-act="edSend">${esc(t('send'))}</button>
@@ -1107,17 +1271,18 @@ async function openPhotoEditor(src, mode = 'photo') {
     const el = document.createElement('div');
     el.className = 'photo-editor'; el.id = 'photoEditor';
     el.innerHTML = `
-        <div class="photo-editor-top"><button data-act="closeEd">✕ ${esc(t('cancelEd'))}</button><div class="photo-editor-title">${esc(isSt ? t('stickerEd') : t('photoWord'))}</div><div style="width:80px"></div></div>
-        <div class="photo-editor-area"><div class="photo-editor-canvas-wrap${isSt ? ' checker' : ''}" id="edWrap">
+        <div class="photo-editor-top"><button data-act="closeEd">✕ ${esc(t('cancelEd'))}</button><div class="photo-editor-title">${esc(isSt ? t('stickerEd') : isAv ? t('avatarEd') : t('photoWord'))}</div><div style="width:80px"></div></div>
+        <div class="photo-editor-area"><div class="photo-editor-canvas-wrap${isSt ? ' checker' : ''}${isAv ? ' avatar-mode' : ''}" id="edWrap">
             <img id="edImg" draggable="false" alt="">
             <div class="crop-overlay"><div class="crop-box" id="cropBox">
+                <div class="crop-move" id="cropMove"></div>
                 <div class="crop-handle tl" data-corner="tl"></div><div class="crop-handle tr" data-corner="tr"></div>
                 <div class="crop-handle bl" data-corner="bl"></div><div class="crop-handle br" data-corner="br"></div>
             </div></div></div></div>
         <div class="photo-editor-controls">
             <button data-act="edRotate"><span class="icon">↺</span><span class="label">${esc(t('rotate'))}</span></button>
             <button data-act="edReset"><span class="icon">↻</span><span class="label">${esc(t('back'))}</span></button>
-            ${isSt ? '' : `<button data-act="edRewrite"><span class="icon">✎</span><span class="label">${esc(t('rewrite'))}</span></button>`}
+            ${mode === 'photo' ? `<button data-act="edRewrite"><span class="icon">✎</span><span class="label">${esc(t('rewrite'))}</span></button>` : ''}
         </div>${bottom}`;
     document.body.appendChild(el);
     if (isSt) $('packName').style.display = 'none';
@@ -1125,10 +1290,18 @@ async function openPhotoEditor(src, mode = 'photo') {
     await setEdImg(ed.rot);
     setupCropHandles();
 }
+function initCrop() {
+    if (ed.mode === 'avatar') {
+        // самый большой квадрат по центру
+        if (ed.W >= ed.H) { const w = ed.H / ed.W; ed.crop = { x: (1 - w) / 2, y: 0, w, h: 1 }; }
+        else { const h = ed.W / ed.H; ed.crop = { x: 0, y: (1 - h) / 2, w: 1, h }; }
+    } else ed.crop = { x: 0, y: 0, w: 1, h: 1 };
+    updateCrop();
+}
 function setEdImg(src) {
     return new Promise(res => {
         const i = $('edImg'); if (!i) return res();
-        i.onload = () => { ed.crop = { x: 0, y: 0, w: 1, h: 1 }; updateCrop(); res(); };
+        i.onload = () => { ed.W = i.naturalWidth || 1; ed.H = i.naturalHeight || 1; initCrop(); res(); };
         i.src = src;
     });
 }
@@ -1139,12 +1312,41 @@ function updateCrop() {
 }
 function setupCropHandles() {
     const wrap = $('edWrap'); if (!wrap) return;
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+    const listen = (move) => {
+        const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up); };
+        document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
+    };
+    // двигать рамку
+    const mv = $('cropMove');
+    if (mv) mv.addEventListener('pointerdown', e => {
+        e.preventDefault(); e.stopPropagation();
+        const sx = e.clientX, sy = e.clientY, sc = { ...ed.crop }, r = wrap.getBoundingClientRect();
+        listen(ev => {
+            const x = clamp(sc.x + (ev.clientX - sx) / r.width, 0, 1 - sc.w);
+            const y = clamp(sc.y + (ev.clientY - sy) / r.height, 0, 1 - sc.h);
+            ed.crop = { x, y, w: sc.w, h: sc.h }; updateCrop();
+        });
+    });
+    // тянуть за уголки
     document.querySelectorAll('.crop-handle').forEach(h => {
         h.addEventListener('pointerdown', e => {
             e.preventDefault(); e.stopPropagation();
             const c = h.dataset.corner, sx = e.clientX, sy = e.clientY, sc = { ...ed.crop }, r = wrap.getBoundingClientRect(), mn = 0.15;
-            const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
-            const move = ev => {
+            if (ed.mode === 'avatar') {
+                const asp = ed.W / ed.H;                       // h = w * asp  (квадрат в пикселях)
+                const ax = c.includes('l') ? sc.x + sc.w : sc.x;  // противоположный угол — якорь
+                const ay = c.includes('t') ? sc.y + sc.h : sc.y;
+                listen(ev => {
+                    const dx = (ev.clientX - sx) / r.width;
+                    const w0 = c.includes('r') ? sc.w + dx : sc.w - dx;
+                    const maxW = Math.min(c.includes('l') ? ax : 1 - ax, (c.includes('t') ? ay : 1 - ay) / asp);
+                    const w = clamp(w0, mn, Math.max(mn, maxW)), hh = w * asp;
+                    ed.crop = { x: c.includes('l') ? ax - w : ax, y: c.includes('t') ? ay - hh : ay, w, h: hh }; updateCrop();
+                });
+                return;
+            }
+            listen(ev => {
                 const dx = (ev.clientX - sx) / r.width, dy = (ev.clientY - sy) / r.height;
                 let l = sc.x, tp = sc.y, rt = sc.x + sc.w, bt = sc.y + sc.h;
                 if (c.includes('l')) l = clamp(sc.x + dx, 0, rt - mn);
@@ -1152,9 +1354,7 @@ function setupCropHandles() {
                 if (c.includes('t')) tp = clamp(sc.y + dy, 0, bt - mn);
                 if (c.includes('b')) bt = clamp(bt + dy, tp + mn, 1);
                 ed.crop = { x: l, y: tp, w: rt - l, h: bt - tp }; updateCrop();
-            };
-            const up = () => { document.removeEventListener('pointermove', move); document.removeEventListener('pointerup', up); document.removeEventListener('pointercancel', up); };
-            document.addEventListener('pointermove', move); document.addEventListener('pointerup', up); document.addEventListener('pointercancel', up);
+            });
         });
     });
 }
@@ -1213,6 +1413,18 @@ A.edSend = async () => {
         setTimeout(() => document.querySelector(`.message[data-id="temp_${cid}"]`)?.remove(), 5000);
         toast(t('photoNotSent') + errText(e));
     }
+};
+/* сохранение аватарки из редактора */
+A.edSaveAvatar = async () => {
+    const btn = document.querySelector('[data-act="edSaveAvatar"]'); if (btn) btn.disabled = true;
+    try {
+        const url = await renderEdited(256, 'image/jpeg', 0.85);
+        await db.ref('avatars/' + me.uid).set(url);
+        avatarCache[me.uid] = { t: Date.now(), p: Promise.resolve(url) }; delete userCache[me.uid];
+        const p = $('myAv'); if (p) p.innerHTML = avatarInner(url, myNick);
+        document.querySelectorAll('.message.my-message .message-avatar').forEach(a => { a.innerHTML = avatarInner(url, myNick); });
+        closePhotoEditor(); toast(t('photoUpdated'));
+    } catch (e) { toast(t('errPrefix') + errText(e)); if (btn) btn.disabled = false; }
 };
 
 /* ---------- СТИКЕРЫ ---------- */
@@ -1461,18 +1673,10 @@ A.saveProfile = async () => {
         myNick = nn; delete userCache[me.uid]; toast(t('saved'));
     } catch (e) { toast(errText(e)); }
 };
+/* аватарка: сначала редактор (кроп квадратом), потом сохранение */
 A.uploadAvatar = async () => {
     const f = await pickImage(); if (!f) return;
-    const btn = $('avBtn');
-    if (btn) { btn.innerHTML = `<span class="avatar-upload-loading"></span> ${esc(t('uploading'))}`; btn.style.pointerEvents = 'none'; }
-    try {
-        const url = await shrink(await readFile(f), 256, 0.85, true);
-        await db.ref('avatars/' + me.uid).set(url);
-        delete avatarCache[me.uid]; delete userCache[me.uid];
-        const p = $('myAv'); if (p) p.innerHTML = avatarInner(url, myNick);
-        toast(t('photoUpdated'));
-    } catch (e) { toast(t('errPrefix') + errText(e)); }
-    if (btn) { btn.innerHTML = t('uploadPhoto'); btn.style.pointerEvents = ''; }
+    try { openPhotoEditor(await readFile(f), 'avatar'); } catch (e) { toast(t('errPrefix') + errText(e)); }
 };
 function secCustom(main) {
     const bg = store.get('chatBg', ''), z = store.get('uiScale', '100'), f = store.get('textSize', '15');
