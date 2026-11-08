@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="theme-color" content="#667eea">
+    <title>Чат</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
+</head>
+<body class="light color-default">
+
+<!-- ЗАГРУЗКА -->
+<div id="loadingScreen" class="loading-screen">
+    <div class="loader"></div>
+    <p id="loadingText">Загрузка...</p>
+</div>
+
+<!-- ВХОД (рисуется из app.js) -->
+<div id="authScreen" class="modal" style="display:none;"></div>
+
+<!-- ВВОД НИКА -->
+<div id="nicknameModal" class="modal" style="display:none;">
+    <div class="modal-content">
+        <h3 data-i18n="nickTitle">Введите ник</h3>
+        <input type="text" id="nicknameInput" data-i18n-ph="nickPh" placeholder="Ник..." maxlength="20" autocomplete="off">
+        <button id="nickBtn" data-i18n="enter">Войти →</button>
+        <a class="auth-link" data-act="signOutQuick" data-i18n="signOut">Выйти из аккаунта</a>
+    </div>
+</div>
+
+<!-- СПИСОК ЧАТОВ -->
+<div class="chats-screen" id="chatsScreen" style="display:none;">
+    <div class="chats-header">
+        <div class="header-spacer"></div>
+        <h2 data-i18n="chatsTitle">Чаты</h2>
+        <button class="burger-btn" data-act="openSettings" title="Настройки">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        </button>
+    </div>
+    <div class="chats-list" id="chatsList"></div>
+</div>
+
+<!-- ЧАТ (общий и личные) -->
+<div class="chat-container" id="chatContainer" style="display:none;">
+    <div class="chat-header" id="chatHeader">
+        <div class="header-top">
+            <button class="back-button" onclick="backToChats()">←</button>
+            <div class="header-title" data-act="headerProfile">
+                <h2 id="chatTitle">💬 Общий чат</h2>
+                <div id="status"></div>
+            </div>
+            <button class="burger-btn" data-act="openSettings" title="Настройки">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h0a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h0a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v0a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+            </button>
+        </div>
+    </div>
+
+    <div id="replyPanel" class="reply-panel" style="display:none;">
+        <div class="reply-panel-content">
+            <div class="reply-panel-line"></div>
+            <div class="reply-panel-text">
+                <div class="reply-panel-name" id="replyPanelName"></div>
+                <div class="reply-panel-message" id="replyPanelMessage"></div>
+            </div>
+            <button class="reply-panel-close" data-act="clearReply">✕</button>
+        </div>
+    </div>
+
+    <div class="messages-wrap" id="messagesWrap">
+        <div class="chat-bg" id="chatBg"></div>
+        <div class="messages-area" id="messages"></div>
+    </div>
+
+    <!-- панель стикеров -->
+    <div class="sticker-panel" id="stickerPanel" style="display:none;">
+        <div class="stk-tabs" id="stkTabs"></div>
+        <div class="stk-grid" id="stkGrid"></div>
+    </div>
+
+    <div class="input-area">
+        <button class="round-btn" id="plusBtn" data-act="plusMenu" disabled title="+">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+        </button>
+        <input type="text" id="messageInput" data-i18n-ph="msgPh" placeholder="Сообщение..." autocomplete="off" disabled>
+        <button class="round-btn" id="stickerBtn" data-act="toggleStickers" disabled title="Стикеры">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M8 14s1.5 2 4 2 4-2 4-2"/><line x1="9" y1="9" x2="9.01" y2="9"/><line x1="15" y1="9" x2="15.01" y2="9"/></svg>
+        </button>
+        <button id="sendBtn" data-act="send" disabled title="Отправить">➤</button>
+    </div>
+</div>
+
+<!-- НАСТРОЙКИ -->
+<div class="settings" id="settings" style="display:none;">
+    <div class="settings-header">
+        <button class="back-button" data-act="closeSettings">←</button>
+        <h2 data-i18n="settings">Настройки</h2>
+        <div class="header-spacer"></div>
+    </div>
+    <div class="settings-body">
+        <div class="settings-side" id="settingsSide"></div>
+        <div class="settings-main" id="settingsMain"></div>
+    </div>
+</div>
+
+<input type="file" id="filePicker" accept="image/*" style="display:none;">
+
+<script src="app.js"></script>
+</body>
+</html>
