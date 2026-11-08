@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#667eea">
     <title>Чат</title>
     <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="extra.css">
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-database-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.8.0/firebase-auth-compat.js"></script>
@@ -73,6 +74,9 @@
         <div class="chat-bg" id="chatBg"></div>
         <div class="messages-area" id="messages"></div>
     </div>
+
+    <!-- кто печатает: аватарка + анимация ••• -->
+    <div class="typing-bar" id="typingBar" style="display:none;"></div>
 
     <!-- панель стикеров -->
     <div class="sticker-panel" id="stickerPanel" style="display:none;">
